@@ -79,8 +79,8 @@ export async function saveReviewToSupabase(
         user_id: user.id,
         provider: review.bill.provider || null,
         service: review.bill.service || null,
-        expected_amount: review.bill.expected_amount,
-        billed_amount: review.bill.billed_amount,
+        expected_amount: typeof review.bill.expected_amount === 'number' ? Math.round(review.bill.expected_amount) : null,
+        billed_amount: typeof review.bill.billed_amount === 'number' ? Math.round(review.bill.billed_amount) : null,
         bill_date: review.bill.date || null,
         account_reference: review.bill.account_reference || null,
         currency: review.bill.currency || 'INR',
@@ -97,7 +97,6 @@ export async function saveReviewToSupabase(
     }
 
     // 2. Clean and Insert bill_charges
-    // Delete existing charges for this bill first if updating
     await supabase.from('bill_charges').delete().eq('bill_id', targetBillId);
 
     const selectedSet = new Set(review.message?.selected_charge_ids || []);
@@ -109,7 +108,7 @@ export async function saveReviewToSupabase(
         charge_id: chargeId,
         bill_id: targetBillId,
         description: charge.description || 'Unlabeled item',
-        amount: charge.amount,
+        amount: typeof charge.amount === 'number' ? Math.round(charge.amount) : null,
         selected: selectedSet.has(charge.id),
         type: charge.type || 'charge',
         explanation_shows: expl?.whatBillShows || null,
@@ -124,6 +123,9 @@ export async function saveReviewToSupabase(
       const { error: chargesError } = await supabase.from('bill_charges').insert(chargesToInsert);
       if (chargesError) {
         console.error('[Supabase] Error saving bill_charges:', chargesError);
+        // Rollback parent bill so no incomplete record remains
+        await supabase.from('bills').delete().eq('bill_id', targetBillId);
+        return { success: false, error: chargesError.message };
       }
     }
 
@@ -133,16 +135,18 @@ export async function saveReviewToSupabase(
     const { error: analysisError } = await supabase.from('bill_analyses').insert({
       analysis_id: generateUuid(),
       bill_id: targetBillId,
-      calculated_total: review.analysis.calculated_total,
-      difference: review.analysis.arithmetic_difference,
-      expected_difference: review.analysis.expected_difference,
-      status: review.analysis.status,
+      calculated_total: typeof review.analysis.calculated_total === 'number' ? Math.round(review.analysis.calculated_total) : null,
+      difference: typeof review.analysis.arithmetic_difference === 'number' ? Math.round(review.analysis.arithmetic_difference) : null,
+      expected_difference: typeof review.analysis.expected_difference === 'number' ? Math.round(review.analysis.expected_difference) : null,
+      status: review.analysis.status || 'incomplete',
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     });
 
     if (analysisError) {
       console.error('[Supabase] Error saving bill_analyses:', analysisError);
+      await supabase.from('bills').delete().eq('bill_id', targetBillId);
+      return { success: false, error: analysisError.message };
     }
 
     // 4. Insert clarification_requests
@@ -165,6 +169,8 @@ export async function saveReviewToSupabase(
 
       if (msgError) {
         console.error('[Supabase] Error saving clarification_requests:', msgError);
+        await supabase.from('bills').delete().eq('bill_id', targetBillId);
+        return { success: false, error: msgError.message };
       }
     }
 

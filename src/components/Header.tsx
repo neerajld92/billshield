@@ -144,10 +144,10 @@ export const Header: React.FC<HeaderProps> = ({
               <ArrowRight className="h-3.5 w-3.5" />
             </button>
 
-            {savedReviewsCount > 0 && (
+            {(savedReviewsCount > 0 || !!user) && (
               <button
                 onClick={onOpenSavedReviews}
-                className="hidden sm:flex items-center gap-1.5 px-3 py-1 text-xs font-mono font-bold text-[#20221F] bg-[#FFFDF7] border border-[#D8D3C8] rounded-md hover:border-[#2546C4] hover:text-[#2546C4] transition-colors"
+                className="hidden sm:flex items-center gap-1.5 px-3 py-1 text-xs font-mono font-bold text-[#20221F] bg-[#FFFDF7] border border-[#D8D3C8] rounded-md hover:border-[#2546C4] hover:text-[#2546C4] transition-colors cursor-pointer"
               >
                 <Bookmark className="h-3 w-3 text-[#2546C4]" />
                 <span>Saved ({savedReviewsCount})</span>
@@ -196,10 +196,10 @@ export const Header: React.FC<HeaderProps> = ({
                 </div>
               )}
 
-              {savedReviewsCount > 0 && (
+              {(savedReviewsCount > 0 || !!user) && (
                 <button
                   onClick={onOpenSavedReviews}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono font-bold text-[#20221F] bg-[#FFFDF7] border border-[#D8D3C8] rounded-md hover:border-[#2546C4] hover:text-[#2546C4] transition-colors"
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono font-bold text-[#20221F] bg-[#FFFDF7] border border-[#D8D3C8] rounded-md hover:border-[#2546C4] hover:text-[#2546C4] transition-colors cursor-pointer"
                 >
                   <Bookmark className="h-3.5 w-3.5 text-[#2546C4]" />
                   <span>Saved reviews ({savedReviewsCount})</span>

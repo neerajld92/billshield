@@ -278,3 +278,23 @@ CREATE POLICY "Users can delete clarification requests of their own bills"
               AND public.bills.user_id = auth.uid()
         )
     );
+
+-- ============================================================================
+-- 6. TABLE PERMISSIONS & ROLE GRANTS
+-- ============================================================================
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+
+GRANT ALL ON TABLE public.bills TO authenticated;
+GRANT ALL ON TABLE public.bill_charges TO authenticated;
+GRANT ALL ON TABLE public.bill_analyses TO authenticated;
+GRANT ALL ON TABLE public.clarification_requests TO authenticated;
+
+GRANT ALL ON TABLE public.bills TO service_role;
+GRANT ALL ON TABLE public.bill_charges TO service_role;
+GRANT ALL ON TABLE public.bill_analyses TO service_role;
+GRANT ALL ON TABLE public.clarification_requests TO service_role;
+
+GRANT SELECT ON TABLE public.bills TO anon;
+GRANT SELECT ON TABLE public.bill_charges TO anon;
+GRANT SELECT ON TABLE public.bill_analyses TO anon;
+GRANT SELECT ON TABLE public.clarification_requests TO anon;

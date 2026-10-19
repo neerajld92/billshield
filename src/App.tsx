@@ -75,6 +75,7 @@ export default function App() {
   });
   const [sessionRef, setSessionRef] = useState<string>('');
   const [isSaved, setIsSaved] = useState<boolean>(false);
+  const [savedSource, setSavedSource] = useState<'local' | 'supabase' | null>(null);
 
   // Saved Reviews (Local device storage & Supabase cloud storage)
   const [localReviews, setLocalReviews] = useState<SavedReview[]>([]);
@@ -185,6 +186,7 @@ export default function App() {
     const ref = `REV-${new Date().getFullYear()}-${(newBill.provider || 'BILL').toUpperCase().replace(/\s+/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
     setSessionRef(ref);
     setIsSaved(false);
+    setSavedSource(null);
 
     // Transition to Screen B (Understand)
     setMaxAccessibleStep(2);
@@ -195,6 +197,7 @@ export default function App() {
   const handleUpdateBill = (updatedBill: Bill) => {
     setBill(updatedBill);
     setIsSaved(false);
+    setSavedSource(null);
     // Invalidate message approval upon bill corrections
     setMessage((prev) => ({
       ...prev,
@@ -288,7 +291,15 @@ export default function App() {
 
   // Active reviews shown in modal and header count
   const displaySavedReviews = useMemo(() => {
-    return user ? supabaseReviews : localReviews;
+    if (!user) return localReviews;
+    // When logged in, show cloud reviews and any un-synced local reviews
+    const remoteRefOrIds = new Set(
+      supabaseReviews.flatMap((r) => [r.id, r.sessionRef, r.bill.id]).filter(Boolean)
+    );
+    const unSyncedLocal = localReviews.filter(
+      (r) => !remoteRefOrIds.has(r.id) && !remoteRefOrIds.has(r.sessionRef) && !remoteRefOrIds.has(r.bill.id)
+    );
+    return [...supabaseReviews, ...unSyncedLocal];
   }, [user, supabaseReviews, localReviews]);
 
   // Explicit sync of local device reviews to Supabase (ONLY when user explicitly requests it)
@@ -314,8 +325,8 @@ export default function App() {
   };
 
   // Saving Review (Cloud if authenticated, Local if guest)
-  const handleSaveReview = async (): Promise<boolean> => {
-    if (!bill) return false;
+  const handleSaveReview = async (): Promise<{ success: boolean; error?: string }> => {
+    if (!bill) return { success: false, error: 'No active bill to save' };
 
     // Create persistent record (without raw file Data URL)
     const reviewToSave: SavedReview = {
@@ -344,18 +355,24 @@ export default function App() {
       const res = await saveReviewToSupabase(reviewToSave, user);
       if (res.success) {
         setIsSaved(true);
+        setSavedSource('supabase');
+        if (res.billId && res.billId !== bill.id) {
+          setBill((prev) => (prev ? { ...prev, id: res.billId! } : prev));
+        }
         const remote = await fetchUserReviewsFromSupabase(user);
         setSupabaseReviews(remote);
-        return true;
+        return { success: true };
       }
-      return false;
+      return { success: false, error: res.error || 'Failed to save to Supabase' };
     } else {
       const success = saveReview({ ...reviewToSave, source: 'local' });
       if (success) {
         setIsSaved(true);
+        setSavedSource('local');
         setLocalReviews(getSavedReviews().map((r) => ({ ...r, source: 'local' })));
+        return { success: true };
       }
-      return success;
+      return { success: false, error: 'Failed to write to local storage' };
     }
   };
 
@@ -368,6 +385,7 @@ export default function App() {
     setCharges(saved.charges);
     setSessionRef(saved.sessionRef || `REV-${saved.bill.id}`);
     setIsSaved(true);
+    setSavedSource(saved.source || 'local');
     setActiveExplanations(saved.explanations || {});
 
     if (saved.message) {
@@ -512,6 +530,7 @@ export default function App() {
             message={message.final_text ? message : null}
             sessionRef={sessionRef}
             isSaved={isSaved}
+            savedSource={savedSource}
             onSaveReview={handleSaveReview}
             onDeleteCurrentReview={handleDeleteCurrentReview}
             onStartAnotherBill={handleStartAnotherBill}

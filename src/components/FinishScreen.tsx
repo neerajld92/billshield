@@ -21,7 +21,8 @@ interface FinishScreenProps {
   message: Message | null;
   sessionRef: string;
   isSaved: boolean;
-  onSaveReview: () => boolean | Promise<boolean>;
+  savedSource?: 'local' | 'supabase' | null;
+  onSaveReview: () => boolean | Promise<boolean | { success: boolean; error?: string }>;
   onDeleteCurrentReview: () => void;
   onStartAnotherBill: () => void;
   isAuthenticated?: boolean;
@@ -35,6 +36,7 @@ export const FinishScreen: React.FC<FinishScreenProps> = ({
   message,
   sessionRef,
   isSaved,
+  savedSource,
   onSaveReview,
   onDeleteCurrentReview,
   onStartAnotherBill,
@@ -47,17 +49,24 @@ export const FinishScreen: React.FC<FinishScreenProps> = ({
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
+  const isSavedToCloud = isSaved && savedSource === 'supabase';
+  const isSavedToLocal = isSaved && savedSource === 'local';
+
   const handleSave = async () => {
     setIsSaving(true);
     setSaveErrorNotice(null);
     try {
-      const ok = await onSaveReview();
-      if (ok) {
+      const res = await onSaveReview();
+      const isOk = typeof res === 'boolean' ? res : res.success;
+      if (isOk) {
         setSaveSuccessNotice(true);
         setTimeout(() => setSaveSuccessNotice(false), 4000);
       } else {
+        const errorMsg = typeof res === 'object' && res.error ? res.error : null;
         setSaveErrorNotice(
-          isAuthenticated
+          errorMsg
+            ? `Failed to save to your Supabase account: ${errorMsg}`
+            : isAuthenticated
             ? 'Failed to save to your Supabase account. Please check your connection and try again.'
             : 'Failed to save to device storage. Please check browser storage settings.'
         );
@@ -280,15 +289,15 @@ export const FinishScreen: React.FC<FinishScreenProps> = ({
 
           <span
             className={`font-mono text-[11px] font-bold px-2.5 py-1 rounded ${
-              isSaved
+              isSavedToCloud || isSavedToLocal
                 ? 'text-[#285840] bg-[#EAF1E8] border border-[#C5DDC0]'
                 : 'text-[#785015] bg-[#FFF0D6] border border-[#F2D7A1]'
             }`}
           >
-            {isSaved
-              ? isAuthenticated
-                ? 'Saved to your account'
-                : 'Saved on this device'
+            {isSavedToCloud
+              ? 'Saved to your account'
+              : isSavedToLocal
+              ? 'Saved on this device'
               : 'Pending Save'}
           </span>
         </div>
@@ -307,17 +316,17 @@ export const FinishScreen: React.FC<FinishScreenProps> = ({
         <button
           type="button"
           onClick={handleSave}
-          disabled={isSaving}
+          disabled={isSaving || isSavedToCloud}
           className={`flex items-center gap-2 px-5 py-2.5 font-mono text-xs font-bold rounded-md transition-colors ${
-            isSaved
-              ? 'bg-[#285840] text-white hover:bg-[#1E4431]'
-              : 'bg-[#2546C4] text-white hover:bg-[#1C369B]'
+            isSavedToCloud
+              ? 'bg-[#285840] text-white'
+              : 'bg-[#2546C4] text-white hover:bg-[#1C369B] cursor-pointer'
           }`}
         >
-          {isSaved ? (
+          {isSavedToCloud ? (
             <>
               <Check className="h-4 w-4" />
-              <span>{isAuthenticated ? 'Saved to your account' : 'Saved on this device'}</span>
+              <span>Saved to your account</span>
             </>
           ) : (
             <>
@@ -326,7 +335,11 @@ export const FinishScreen: React.FC<FinishScreenProps> = ({
                 {isSaving
                   ? 'Saving review...'
                   : isAuthenticated
-                  ? 'Save this review to your account'
+                  ? isSavedToLocal
+                    ? 'Save this review to your account'
+                    : 'Save this review to your account'
+                  : isSavedToLocal
+                  ? 'Saved on this device'
                   : 'Save this review on this device'}
               </span>
             </>
