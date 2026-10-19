@@ -102,6 +102,9 @@ export const UploadScreen: React.FC<UploadScreenProps> = ({
 
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}));
+        if (!errData.error && response.status === 413) {
+          throw new Error('This file is too large to upload to the online version. Try a file under about 3 MB, or a smaller image.');
+        }
         throw new Error(errData.error || 'We couldn’t read this clearly. Try a clearer image or another file.');
       }
 

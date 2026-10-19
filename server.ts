@@ -3,13 +3,12 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { GoogleGenAI, Type } from '@google/genai';
-import { createServer as createViteServer } from 'vite';
 import {
   sanitizeCustomerReference,
   isCompanyName,
   cleanProviderName,
   sanitizeBillDate,
-} from './src/utils/reference.ts';
+} from './src/utils/reference.js';
 
 dotenv.config();
 
@@ -337,16 +336,33 @@ Extraction rules:
 
     return res.json({ bill, charges });
   } catch (error: any) {
-    console.error('Error in /api/extract-bill:', error?.status, error?.message);
-    const msg = error?.message || '';
-    if (error?.status === 503 || msg.includes('high demand') || msg.includes('UNAVAILABLE')) {
+    const rawMsg: string = error?.message || '';
+    // Never write anything shaped like a Google API key to logs
+    const safeMsg = rawMsg.replace(/AIza[0-9A-Za-z_-]{20,}/g, '[redacted]').slice(0, 300);
+    console.error('Error in /api/extract-bill:', error?.status, safeMsg);
+    const msg = rawMsg;
+    const status = error?.status;
+
+    if (error instanceof SyntaxError) {
+      // AI returned output that could not be parsed as the expected JSON
+      return res.status(422).json({ error: 'We couldn’t read this clearly. Try a clearer image or another file.' });
+    } else if (
+      status === 401 ||
+      status === 403 ||
+      msg.includes('API_KEY') ||
+      msg.includes('API key') ||
+      msg.includes('PERMISSION_DENIED') ||
+      msg.includes('UNAUTHENTICATED')
+    ) {
+      return res.status(500).json({ error: 'Gemini API key is missing, invalid or not permitted on the server.' });
+    } else if (status === 503 || msg.includes('high demand') || msg.includes('UNAVAILABLE')) {
       return res.status(503).json({ error: 'AI service temporarily unavailable due to high demand. Please try again.' });
-    } else if (error?.status === 429 || msg.includes('quota') || msg.includes('RESOURCE_EXHAUSTED')) {
+    } else if (status === 429 || msg.includes('quota') || msg.includes('RESOURCE_EXHAUSTED')) {
       return res.status(429).json({ error: 'AI service quota temporarily exceeded. Please try again later.' });
     } else if (msg.includes('timed out')) {
       return res.status(504).json({ error: 'The AI request timed out. Please try again.' });
-    } else if (msg.includes('API_KEY')) {
-      return res.status(500).json({ error: 'Gemini API key is not configured.' });
+    } else if (status === 404 || msg.includes('NOT_FOUND') || msg.includes('is not found')) {
+      return res.status(502).json({ error: 'The configured AI model is not available. Please contact the app owner.' });
     } else {
       return res.status(500).json({ error: 'AI service temporarily unavailable. Please try again.' });
     }
@@ -530,6 +546,7 @@ async function startServer() {
 
   if (!isProd) {
     const isHmrDisabled = process.env.DISABLE_HMR === 'true';
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
