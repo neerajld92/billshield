@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      // Runtime Environment: HMR is disabled. Ignore WebSocket connection errors from @vite/client in preview iframe.
+      window.addEventListener('error', function (event) {
+        if (
+          (event.filename && (event.filename.includes('@vite/client') || event.filename.includes('vite'))) ||
+          (event.message && (event.message.includes('WebSocket') || event.message.includes('vite-hmr')))
+        ) {
+          event.stopImmediatePropagation();
+          event.preventDefault();
+          return true;
+        }
+      });
+      window.addEventListener('unhandledrejection', function (event) {
+        if (
+          event.reason &&
+          (String(event.reason).includes('WebSocket') ||
+            String(event.reason).includes('vite-hmr') ||
+            String(event.reason?.stack || '').includes('@vite/client'))
+        ) {
+          event.stopImmediatePropagation();
+          event.preventDefault();
+        }
+      });
+    </script>
+    <title>BillShield — Understand your bill. Ask with confidence.</title>
+    <meta name="description" content="A consumer bill understanding and clarification tool. Understand what you were charged, verify the numbers with deterministic arithmetic, and ask about anything unclear." />
+    <meta property="og:title" content="BillShield — Understand your bill. Ask with confidence." />
+    <meta property="og:description" content="A consumer bill understanding and clarification tool. Understand what you were charged, verify the numbers with deterministic arithmetic, and ask about anything unclear." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400;1,700&family=Work+Sans:ital,wght@0,300..900;1,300..900&display=swap" rel="stylesheet">
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

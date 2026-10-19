@@ -1,0 +1,6 @@
+{
+  "name": "BillShield",
+  "description": "Understand your bill. Ask with confidence. Deterministic math reconciliation and plain-language charge explanations.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

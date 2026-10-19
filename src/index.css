@@ -1,0 +1,46 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --bg-page: #F5F1E8;
+    --surface-card: #FFFDF7;
+    --text-ink: #20221F;
+    --text-muted: #555B55;
+    --accent-cobalt: #2546C4;
+    --border-soft: #D8D3C8;
+    --border-input: #777B73;
+    --match-text: #285840;
+    --match-bg: #EAF1E8;
+    --review-text: #785015;
+    --review-bg: #FFF0D6;
+    --error-text: #A12D2D;
+    --error-bg: #FBECEC;
+  }
+
+  body {
+    background-color: var(--bg-page);
+    color: var(--text-ink);
+    font-family: 'Work Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    min-height: 100vh;
+  }
+
+  .font-mono-numbers {
+    font-family: 'Space Mono', monospace, ui-monospace, SFMono-Regular;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Subtle ledger pattern / paper feel */
+.bg-paper {
+  background-color: #FFFDF7;
+}
+
+.border-ledger {
+  border-color: #D8D3C8;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
