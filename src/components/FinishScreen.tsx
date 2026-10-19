@@ -21,9 +21,11 @@ interface FinishScreenProps {
   message: Message | null;
   sessionRef: string;
   isSaved: boolean;
-  onSaveReview: () => boolean;
+  onSaveReview: () => boolean | Promise<boolean>;
   onDeleteCurrentReview: () => void;
   onStartAnotherBill: () => void;
+  isAuthenticated?: boolean;
+  onOpenAuth?: () => void;
 }
 
 export const FinishScreen: React.FC<FinishScreenProps> = ({
@@ -36,16 +38,34 @@ export const FinishScreen: React.FC<FinishScreenProps> = ({
   onSaveReview,
   onDeleteCurrentReview,
   onStartAnotherBill,
+  isAuthenticated,
+  onOpenAuth,
 }) => {
   const [saveSuccessNotice, setSaveSuccessNotice] = useState(false);
+  const [saveErrorNotice, setSaveErrorNotice] = useState<string | null>(null);
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
-  const handleSave = () => {
-    const ok = onSaveReview();
-    if (ok) {
-      setSaveSuccessNotice(true);
-      setTimeout(() => setSaveSuccessNotice(false), 4000);
+  const handleSave = async () => {
+    setIsSaving(true);
+    setSaveErrorNotice(null);
+    try {
+      const ok = await onSaveReview();
+      if (ok) {
+        setSaveSuccessNotice(true);
+        setTimeout(() => setSaveSuccessNotice(false), 4000);
+      } else {
+        setSaveErrorNotice(
+          isAuthenticated
+            ? 'Failed to save to your Supabase account. Please check your connection and try again.'
+            : 'Failed to save to device storage. Please check browser storage settings.'
+        );
+      }
+    } catch (err: any) {
+      setSaveErrorNotice(err?.message || 'Failed to save review.');
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -239,7 +259,7 @@ export const FinishScreen: React.FC<FinishScreenProps> = ({
         )}
       </div>
 
-      {/* Local Device Storage Card (Image 9) */}
+      {/* Storage Card (Cloud or Local Device) */}
       <div className="mb-6 rounded-lg border border-[#D8D3C8] bg-[#FFFDF7] p-6 shadow-2xs">
         <div className="flex items-start justify-between gap-3 mb-4">
           <div className="flex items-center gap-3">
@@ -247,8 +267,14 @@ export const FinishScreen: React.FC<FinishScreenProps> = ({
               <Lock className="h-5 w-5" />
             </div>
             <div>
-              <h3 className="font-semibold text-base text-[#20221F]">Local Device Storage</h3>
-              <p className="text-xs text-[#555B55]">Keep your audited numbers available for follow-ups</p>
+              <h3 className="font-semibold text-base text-[#20221F]">
+                {isAuthenticated ? 'Account Cloud Storage' : 'Local Device Storage'}
+              </h3>
+              <p className="text-xs text-[#555B55]">
+                {isAuthenticated
+                  ? 'Private cloud record protected by Supabase Row Level Security'
+                  : 'Keep your audited numbers available for follow-ups on this device'}
+              </p>
             </div>
           </div>
 
@@ -259,22 +285,29 @@ export const FinishScreen: React.FC<FinishScreenProps> = ({
                 : 'text-[#785015] bg-[#FFF0D6] border border-[#F2D7A1]'
             }`}
           >
-            {isSaved ? 'Saved on this device' : 'Pending Save'}
+            {isSaved
+              ? isAuthenticated
+                ? 'Saved to your account'
+                : 'Saved on this device'
+              : 'Pending Save'}
           </span>
         </div>
 
-        {/* Privacy & local persistence notice */}
+        {/* Privacy & persistence notice */}
         <div className="rounded-md border border-[#D8D3C8]/80 bg-[#F4F4EF] p-3 text-xs text-[#555B55] leading-relaxed mb-4">
           <span className="font-mono font-bold text-[10px] uppercase text-[#20221F] block mb-1">
-            PRIVACY & LOCAL PERSISTENCE NOTICE
+            {isAuthenticated ? 'PRIVACY & CLOUD PERSISTENCE NOTICE' : 'PRIVACY & LOCAL PERSISTENCE NOTICE'}
           </span>
-          Saves the bill details and message in this browser, without the original file. Other people using this browser may see them. You can delete them anytime.
+          {isAuthenticated
+            ? 'Stores the structured bill calculations, charges, explanations, and drafted messages in your private Supabase database. Strict Row Level Security prevents any other user from accessing your records.'
+            : 'Saves the bill details and message in this browser, without the original file. Other people using this browser may see them. You can delete them anytime.'}
         </div>
 
         {/* Save button */}
         <button
           type="button"
           onClick={handleSave}
+          disabled={isSaving}
           className={`flex items-center gap-2 px-5 py-2.5 font-mono text-xs font-bold rounded-md transition-colors ${
             isSaved
               ? 'bg-[#285840] text-white hover:bg-[#1E4431]'
@@ -284,19 +317,43 @@ export const FinishScreen: React.FC<FinishScreenProps> = ({
           {isSaved ? (
             <>
               <Check className="h-4 w-4" />
-              <span>Saved on this device</span>
+              <span>{isAuthenticated ? 'Saved to your account' : 'Saved on this device'}</span>
             </>
           ) : (
             <>
               <Bookmark className="h-4 w-4" />
-              <span>Save this review on this device</span>
+              <span>
+                {isSaving
+                  ? 'Saving review...'
+                  : isAuthenticated
+                  ? 'Save this review to your account'
+                  : 'Save this review on this device'}
+              </span>
             </>
           )}
         </button>
 
+        {!isAuthenticated && onOpenAuth && (
+          <button
+            type="button"
+            onClick={onOpenAuth}
+            className="mt-3 block text-xs font-mono text-[#2546C4] hover:underline"
+          >
+            Want to sync across devices? Sign in with email →
+          </button>
+        )}
+
         {saveSuccessNotice && (
           <p className="mt-2 text-xs text-[#285840] font-mono">
-            ✓ Successfully saved to this browser's local storage.
+            {isAuthenticated
+              ? '✓ Successfully saved to your private Supabase account.'
+              : "✓ Successfully saved to this browser's local storage."}
+          </p>
+        )}
+
+        {saveErrorNotice && (
+          <p className="mt-2 text-xs text-[#A12D2D] font-mono">
+            ✕ {saveErrorNotice}
           </p>
         )}
       </div>

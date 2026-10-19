@@ -15,9 +15,16 @@
  */
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { Bill, Charge, Analysis, Message, SavedReview } from './types';
+import { User } from '@supabase/supabase-js';
+import { Bill, Charge, Analysis, Message, SavedReview, ChargeExplanation } from './types';
 import { calculateAnalysis } from './utils/money';
 import { getSavedReviews, saveReview, deleteSavedReview } from './utils/storage';
+import {
+  supabase,
+  saveReviewToSupabase,
+  fetchUserReviewsFromSupabase,
+  deleteReviewFromSupabase,
+} from './utils/supabase';
 
 import { Header, AppStage } from './components/Header';
 import { Footer } from './components/Footer';
@@ -28,6 +35,7 @@ import { MessageScreen } from './components/MessageScreen';
 import { FinishScreen } from './components/FinishScreen';
 import { PrivacyModal } from './components/PrivacyModal';
 import { SavedReviewsModal } from './components/SavedReviewsModal';
+import { AuthModal } from './components/AuthModal';
 
 function getInitialStage(): AppStage {
   if (typeof window !== 'undefined') {
@@ -45,9 +53,14 @@ export default function App() {
   const [maxAccessibleStep, setMaxAccessibleStep] = useState<number>(1);
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
+  // Authentication State
+  const [user, setUser] = useState<User | null>(null);
+  const [isAuthOpen, setIsAuthOpen] = useState<boolean>(false);
+
   // Active Review State
   const [bill, setBill] = useState<Bill | null>(null);
   const [charges, setCharges] = useState<Charge[]>([]);
+  const [activeExplanations, setActiveExplanations] = useState<Record<string, ChargeExplanation>>({});
   const [selectedChargeIds, setSelectedChargeIds] = useState<string[]>([]);
   const [message, setMessage] = useState<Message>({
     id: `msg-${Date.now()}`,
@@ -63,14 +76,44 @@ export default function App() {
   const [sessionRef, setSessionRef] = useState<string>('');
   const [isSaved, setIsSaved] = useState<boolean>(false);
 
-  // Saved Reviews List
-  const [savedReviews, setSavedReviews] = useState<SavedReview[]>([]);
+  // Saved Reviews (Local device storage & Supabase cloud storage)
+  const [localReviews, setLocalReviews] = useState<SavedReview[]>([]);
+  const [supabaseReviews, setSupabaseReviews] = useState<SavedReview[]>([]);
   const [isPrivacyOpen, setIsPrivacyOpen] = useState<boolean>(false);
   const [isSavedReviewsOpen, setIsSavedReviewsOpen] = useState<boolean>(false);
 
-  // Load saved reviews on mount
+  // Load reviews & listen for auth changes
   useEffect(() => {
-    setSavedReviews(getSavedReviews());
+    // 1. Initial local reviews
+    const stored = getSavedReviews().map((r) => ({ ...r, source: 'local' as const }));
+    setLocalReviews(stored);
+
+    // 2. Supabase auth session & real-time changes
+    let unsubscribeAuth: (() => void) | undefined;
+    if (supabase) {
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        const currentUser = session?.user ?? null;
+        setUser(currentUser);
+        if (currentUser) {
+          fetchUserReviewsFromSupabase(currentUser).then((remote) => {
+            setSupabaseReviews(remote);
+          });
+        }
+      });
+
+      const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+        const currentUser = session?.user ?? null;
+        setUser(currentUser);
+        if (currentUser) {
+          fetchUserReviewsFromSupabase(currentUser).then((remote) => {
+            setSupabaseReviews(remote);
+          });
+        } else {
+          setSupabaseReviews([]);
+        }
+      });
+      unsubscribeAuth = () => subscription.unsubscribe();
+    }
 
     // Handle browser popstate
     const handlePopState = () => {
@@ -82,7 +125,10 @@ export default function App() {
       else setCurrentStage('landing');
     };
     window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
+    return () => {
+      unsubscribeAuth?.();
+      window.removeEventListener('popstate', handlePopState);
+    };
   }, []);
 
   // Update browser URL on stage change
@@ -240,8 +286,35 @@ export default function App() {
     }
   };
 
-  // Saving Review to Local Device Storage
-  const handleSaveReview = (): boolean => {
+  // Active reviews shown in modal and header count
+  const displaySavedReviews = useMemo(() => {
+    return user ? supabaseReviews : localReviews;
+  }, [user, supabaseReviews, localReviews]);
+
+  // Explicit sync of local device reviews to Supabase (ONLY when user explicitly requests it)
+  const handleSyncLocalReviews = async () => {
+    if (!user) return;
+    for (const r of localReviews) {
+      await saveReviewToSupabase(r, user);
+    }
+    const updatedRemote = await fetchUserReviewsFromSupabase(user);
+    setSupabaseReviews(updatedRemote);
+    // Clear local reviews after explicit sync
+    localStorage.removeItem('billshield_saved_reviews');
+    setLocalReviews([]);
+  };
+
+  // Sign out
+  const handleSignOut = async () => {
+    if (supabase) {
+      await supabase.auth.signOut();
+      setUser(null);
+      setSupabaseReviews([]);
+    }
+  };
+
+  // Saving Review (Cloud if authenticated, Local if guest)
+  const handleSaveReview = async (): Promise<boolean> => {
     if (!bill) return false;
 
     // Create persistent record (without raw file Data URL)
@@ -257,20 +330,33 @@ export default function App() {
         currency: bill.currency,
         expected_amount: bill.expected_amount,
         billed_amount: bill.billed_amount,
+        account_reference: bill.account_reference,
         fileName: bill.fileName,
         originalAvailable: false,
       },
       charges,
       analysis: currentAnalysis,
       message: message.final_text ? message : null,
+      explanations: Object.keys(activeExplanations).length > 0 ? activeExplanations : undefined,
     };
 
-    const success = saveReview(reviewToSave);
-    if (success) {
-      setIsSaved(true);
-      setSavedReviews(getSavedReviews());
+    if (user) {
+      const res = await saveReviewToSupabase(reviewToSave, user);
+      if (res.success) {
+        setIsSaved(true);
+        const remote = await fetchUserReviewsFromSupabase(user);
+        setSupabaseReviews(remote);
+        return true;
+      }
+      return false;
+    } else {
+      const success = saveReview({ ...reviewToSave, source: 'local' });
+      if (success) {
+        setIsSaved(true);
+        setLocalReviews(getSavedReviews().map((r) => ({ ...r, source: 'local' })));
+      }
+      return success;
     }
-    return success;
   };
 
   // Open saved review
@@ -282,6 +368,7 @@ export default function App() {
     setCharges(saved.charges);
     setSessionRef(saved.sessionRef || `REV-${saved.bill.id}`);
     setIsSaved(true);
+    setActiveExplanations(saved.explanations || {});
 
     if (saved.message) {
       setMessage(saved.message);
@@ -306,9 +393,15 @@ export default function App() {
   };
 
   // Delete saved review
-  const handleDeleteReview = (id: string) => {
-    deleteSavedReview(id);
-    setSavedReviews(getSavedReviews());
+  const handleDeleteReview = async (id: string, source?: 'local' | 'supabase') => {
+    if (source === 'supabase' && user) {
+      await deleteReviewFromSupabase(id);
+      const remote = await fetchUserReviewsFromSupabase(user);
+      setSupabaseReviews(remote);
+    } else {
+      deleteSavedReview(id);
+      setLocalReviews(getSavedReviews().map((r) => ({ ...r, source: 'local' })));
+    }
     if (bill && bill.id === id) {
       setIsSaved(false);
     }
@@ -317,7 +410,7 @@ export default function App() {
   // Delete active saved review
   const handleDeleteCurrentReview = () => {
     if (bill) {
-      handleDeleteReview(bill.id);
+      handleDeleteReview(bill.id, user ? 'supabase' : 'local');
     }
   };
 
@@ -326,6 +419,7 @@ export default function App() {
     setBill(null);
     setCharges([]);
     setSelectedChargeIds([]);
+    setActiveExplanations({});
     setMessage({
       id: `msg-${Date.now()}`,
       bill_id: '',
@@ -352,8 +446,11 @@ export default function App() {
         maxAccessibleStep={maxAccessibleStep}
         isReviewActive={!!bill}
         isSaved={isSaved}
-        savedReviewsCount={savedReviews.length}
+        savedReviewsCount={displaySavedReviews.length}
         onOpenSavedReviews={() => setIsSavedReviewsOpen(true)}
+        user={user}
+        onOpenAuth={() => setIsAuthOpen(true)}
+        onSignOut={handleSignOut}
       />
 
       {/* Main Flow Content */}
@@ -362,7 +459,7 @@ export default function App() {
           <LandingScreen
             onStartUpload={() => navigateToStage('upload')}
             onOpenPrivacy={() => setIsPrivacyOpen(true)}
-            savedReviewsCount={savedReviews.length}
+            savedReviewsCount={displaySavedReviews.length}
             onOpenSavedReviews={() => setIsSavedReviewsOpen(true)}
           />
         )}
@@ -390,6 +487,8 @@ export default function App() {
             onGoToMessage={handleGoToMessage}
             onGoToFinishWithoutDrafting={handleGoToFinishWithoutDrafting}
             onReupload={handleStartAnotherBill}
+            cachedExplanations={activeExplanations}
+            onExplanationsUpdate={setActiveExplanations}
           />
         )}
 
@@ -416,6 +515,8 @@ export default function App() {
             onSaveReview={handleSaveReview}
             onDeleteCurrentReview={handleDeleteCurrentReview}
             onStartAnotherBill={handleStartAnotherBill}
+            isAuthenticated={!!user}
+            onOpenAuth={() => setIsAuthOpen(true)}
           />
         )}
 
@@ -444,10 +545,31 @@ export default function App() {
       <SavedReviewsModal
         isOpen={isSavedReviewsOpen}
         onClose={() => setIsSavedReviewsOpen(false)}
-        savedReviews={savedReviews}
+        savedReviews={displaySavedReviews}
         onOpenReview={handleOpenSavedReview}
         onDeleteReview={handleDeleteReview}
         isCurrentReviewUnsaved={!!bill && !isSaved}
+        isAuthenticated={!!user}
+        localReviewsCount={localReviews.length}
+        onSyncLocalReviews={handleSyncLocalReviews}
+      />
+
+      {/* Passwordless Auth Modal */}
+      <AuthModal
+        isOpen={isAuthOpen}
+        onClose={() => setIsAuthOpen(false)}
+        onSuccess={() => {
+          if (supabase) {
+            supabase.auth.getUser().then(({ data: { user } }) => {
+              if (user) {
+                setUser(user);
+                fetchUserReviewsFromSupabase(user).then((remote) => {
+                  setSupabaseReviews(remote);
+                });
+              }
+            });
+          }
+        }}
       />
     </div>
   );

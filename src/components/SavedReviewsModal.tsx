@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Trash2, ArrowRight, Bookmark, Calendar, AlertTriangle } from 'lucide-react';
+import { X, Trash2, ArrowRight, Bookmark, Calendar, AlertTriangle, Cloud, HardDrive, RefreshCw, Loader2 } from 'lucide-react';
 import { SavedReview } from '../types';
 import { formatMinorUnits } from '../utils/money';
 
@@ -8,8 +8,11 @@ interface SavedReviewsModalProps {
   onClose: () => void;
   savedReviews: SavedReview[];
   onOpenReview: (review: SavedReview) => void;
-  onDeleteReview: (id: string) => void;
+  onDeleteReview: (id: string, source?: 'local' | 'supabase') => void;
   isCurrentReviewUnsaved: boolean;
+  isAuthenticated?: boolean;
+  localReviewsCount?: number;
+  onSyncLocalReviews?: () => Promise<void>;
 }
 
 export const SavedReviewsModal: React.FC<SavedReviewsModalProps> = ({
@@ -19,9 +22,14 @@ export const SavedReviewsModal: React.FC<SavedReviewsModalProps> = ({
   onOpenReview,
   onDeleteReview,
   isCurrentReviewUnsaved,
+  isAuthenticated,
+  localReviewsCount = 0,
+  onSyncLocalReviews,
 }) => {
   const [reviewToOpen, setReviewToOpen] = useState<SavedReview | null>(null);
   const [reviewToDelete, setReviewToDelete] = useState<SavedReview | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [dismissSyncBanner, setDismissSyncBanner] = useState(false);
 
   if (!isOpen) return null;
 
@@ -35,8 +43,21 @@ export const SavedReviewsModal: React.FC<SavedReviewsModalProps> = ({
 
   const handleConfirmDelete = () => {
     if (reviewToDelete) {
-      onDeleteReview(reviewToDelete.id);
+      onDeleteReview(reviewToDelete.id, reviewToDelete.source);
       setReviewToDelete(null);
+    }
+  };
+
+  const handleSync = async () => {
+    if (!onSyncLocalReviews) return;
+    setIsSyncing(true);
+    try {
+      await onSyncLocalReviews();
+      setDismissSyncBanner(true);
+    } catch (e) {
+      console.error('Failed to sync reviews', e);
+    } finally {
+      setIsSyncing(false);
     }
   };
 
@@ -51,9 +72,15 @@ export const SavedReviewsModal: React.FC<SavedReviewsModalProps> = ({
         {/* Header */}
         <div className="flex items-center justify-between border-b border-[#D8D3C8] px-6 py-4 bg-[#F5F1E8]">
           <div className="flex items-center gap-2">
-            <Bookmark className="h-4 w-4 text-[#2546C4]" />
+            {isAuthenticated ? (
+              <Cloud className="h-4 w-4 text-[#2546C4]" />
+            ) : (
+              <Bookmark className="h-4 w-4 text-[#2546C4]" />
+            )}
             <h2 id="saved-reviews-title" className="font-mono text-sm font-bold uppercase tracking-wider">
-              Saved Reviews on this Device ({savedReviews.length})
+              {isAuthenticated
+                ? `Saved Reviews (${savedReviews.length})`
+                : `Saved Reviews on this Device (${savedReviews.length})`}
             </h2>
           </div>
           <button
@@ -64,6 +91,36 @@ export const SavedReviewsModal: React.FC<SavedReviewsModalProps> = ({
             <X className="h-5 w-5" />
           </button>
         </div>
+
+        {/* Explicit Consent Local Review Sync Prompt */}
+        {isAuthenticated && localReviewsCount > 0 && !dismissSyncBanner && (
+          <div className="p-3 bg-[#EAF1E8] border-b border-[#C5DDC0] text-xs text-[#285840] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="flex items-start sm:items-center gap-2">
+              <Cloud className="h-4 w-4 shrink-0 mt-0.5 sm:mt-0" />
+              <span>
+                Found <strong>{localReviewsCount}</strong> review(s) saved on this device. Would you like to sync them to your Supabase account?
+              </span>
+            </div>
+            <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+              <button
+                type="button"
+                onClick={() => setDismissSyncBanner(true)}
+                className="px-2.5 py-1 text-xs font-mono rounded border border-[#C5DDC0] bg-white hover:bg-[#F5F1E8] text-[#555B55]"
+              >
+                Keep local only
+              </button>
+              <button
+                type="button"
+                onClick={handleSync}
+                disabled={isSyncing}
+                className="px-2.5 py-1 text-xs font-mono font-bold rounded bg-[#285840] text-white hover:bg-[#1E4431] flex items-center gap-1.5"
+              >
+                {isSyncing ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                <span>Sync to Account</span>
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Unsaved warning prompt inside modal */}
         {reviewToOpen && (
@@ -100,7 +157,7 @@ export const SavedReviewsModal: React.FC<SavedReviewsModalProps> = ({
               <div>
                 <span className="font-bold">Delete this saved review?</span>
                 <p className="mt-0.5">
-                  Permanently remove {reviewToDelete.bill.provider || 'Bill'} ({reviewToDelete.sessionRef}) and its drafted message from this device?
+                  Permanently remove {reviewToDelete.bill.provider || 'Bill'} ({reviewToDelete.sessionRef}) and its drafted message?
                 </p>
               </div>
             </div>
@@ -126,9 +183,11 @@ export const SavedReviewsModal: React.FC<SavedReviewsModalProps> = ({
           {savedReviews.length === 0 ? (
             <div className="text-center py-10 text-[#555B55]">
               <Bookmark className="h-8 w-8 mx-auto text-[#D8D3C8] mb-2" />
-              <p className="font-mono text-sm font-semibold text-[#20221F]">No saved reviews on this device</p>
+              <p className="font-mono text-sm font-semibold text-[#20221F]">
+                {isAuthenticated ? 'No saved reviews in your account' : 'No saved reviews on this device'}
+              </p>
               <p className="text-xs text-[#555B55] mt-1 max-w-sm mx-auto">
-                Saving is optional. When you finish reviewing a bill, you can choose to save the audited numbers and drafted messages on this browser.
+                Saving is optional. When you finish reviewing a bill, you can choose to save the audited numbers and drafted messages.
               </p>
             </div>
           ) : (
@@ -158,6 +217,17 @@ export const SavedReviewsModal: React.FC<SavedReviewsModalProps> = ({
                             ? 'Mismatch'
                             : 'Incomplete'}
                         </span>
+                        {r.source === 'supabase' ? (
+                          <span className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono text-[#2546C4] bg-[#EEF2FD] border border-[#CAD6FC]">
+                            <Cloud className="h-2.5 w-2.5" />
+                            <span>Cloud</span>
+                          </span>
+                        ) : (
+                          <span className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono text-[#555B55] bg-[#E8E8E3]">
+                            <HardDrive className="h-2.5 w-2.5" />
+                            <span>Device</span>
+                          </span>
+                        )}
                       </div>
                       <div className="text-xs text-[#555B55] mt-1 flex flex-wrap items-center gap-2">
                         <span>{r.bill.service || 'Service'}</span>
@@ -209,7 +279,11 @@ export const SavedReviewsModal: React.FC<SavedReviewsModalProps> = ({
 
         {/* Footer */}
         <div className="border-t border-[#D8D3C8] px-6 py-3 bg-[#F5F1E8] flex justify-between items-center text-xs text-[#555B55]">
-          <span>Stored solely on this browser</span>
+          <span>
+            {isAuthenticated
+              ? 'Synced privately via Supabase (Row Level Security protected)'
+              : 'Stored solely on this browser'}
+          </span>
           <button
             onClick={onClose}
             className="px-3 py-1.5 text-xs font-mono font-medium border border-[#D8D3C8] rounded-md bg-white hover:bg-[#F5F1E8]"

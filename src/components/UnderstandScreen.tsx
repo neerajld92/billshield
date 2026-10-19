@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   FileText,
   Edit2,
@@ -33,6 +33,8 @@ interface UnderstandScreenProps {
   onGoToMessage: (additionalRef?: string) => void;
   onGoToFinishWithoutDrafting: () => void;
   onReupload: () => void;
+  cachedExplanations?: Record<string, ChargeExplanation>;
+  onExplanationsUpdate?: (explanations: Record<string, ChargeExplanation>) => void;
 }
 
 export const UnderstandScreen: React.FC<UnderstandScreenProps> = ({
@@ -47,15 +49,26 @@ export const UnderstandScreen: React.FC<UnderstandScreenProps> = ({
   onGoToMessage,
   onGoToFinishWithoutDrafting,
   onReupload,
+  cachedExplanations,
+  onExplanationsUpdate,
 }) => {
   // Inspection panel state
   const [inspectedChargeId, setInspectedChargeId] = useState<string | null>(() => {
     const match = charges?.find((c) => (c?.description || '').toLowerCase().includes('isd') || c?.type === 'fee');
     return match?.id || charges?.[0]?.id || null;
   });
-  const [explanations, setExplanations] = useState<Record<string, ChargeExplanation>>({});
+  const [explanations, setExplanations] = useState<Record<string, ChargeExplanation>>(
+    () => cachedExplanations || {}
+  );
   const [loadingExplanationId, setLoadingExplanationId] = useState<string | null>(null);
   const [explanationError, setExplanationError] = useState<string | null>(null);
+
+  // Sync explanations when cachedExplanations prop updates
+  useEffect(() => {
+    if (cachedExplanations && Object.keys(cachedExplanations).length > 0) {
+      setExplanations((prev) => ({ ...cachedExplanations, ...prev }));
+    }
+  }, [cachedExplanations]);
 
   // Modals state
   const [isEditBillModalOpen, setIsEditBillModalOpen] = useState(false);
@@ -102,22 +115,25 @@ export const UnderstandScreen: React.FC<UnderstandScreenProps> = ({
 
       const explanation = await response.json();
       if (explanation && explanation.whatBillShows) {
-        setExplanations((prev) => ({
-          ...prev,
-          [charge.id]: explanation,
-        }));
+        setExplanations((prev) => {
+          const next = { ...prev, [charge.id]: explanation };
+          onExplanationsUpdate?.(next);
+          return next;
+        });
       }
     } catch (err: any) {
       console.warn('Explain charge error caught, using factual fallback:', err?.message);
       // Fallback explanation so user is never blocked
-      setExplanations((prev) => ({
-        ...prev,
-        [charge.id]: {
-          whatBillShows: `The bill lists "${charge.description}" with an amount of ${charge.amount !== null ? formatMinorUnits(charge.amount, bill?.currency || 'INR') : 'unspecified'}.`,
-          whatThisUsuallyMeans: `This represents a standard line item billed under ${charge.type.replace('_', ' ')} by ${bill?.provider || 'your service provider'}.`,
-          whatRemainsUnclear: `The bill does not include an itemised usage breakdown or tariff calculation for this specific charge.`,
-        },
-      }));
+      const fallbackExpl: ChargeExplanation = {
+        whatBillShows: `The bill lists "${charge.description}" with an amount of ${charge.amount !== null ? formatMinorUnits(charge.amount, bill?.currency || 'INR') : 'unspecified'}.`,
+        whatThisUsuallyMeans: `This represents a standard line item billed under ${charge.type.replace('_', ' ')} by ${bill?.provider || 'your service provider'}.`,
+        whatRemainsUnclear: `The bill does not include an itemised usage breakdown or tariff calculation for this specific charge.`,
+      };
+      setExplanations((prev) => {
+        const next = { ...prev, [charge.id]: fallbackExpl };
+        onExplanationsUpdate?.(next);
+        return next;
+      });
     } finally {
       setLoadingExplanationId(null);
     }

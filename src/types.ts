@@ -83,4 +83,6 @@ export interface SavedReview {
   charges: Charge[];
   analysis: Analysis;
   message: Message | null;
+  explanations?: Record<string, ChargeExplanation>;
+  source?: 'local' | 'supabase';
 }

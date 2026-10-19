@@ -1,5 +1,6 @@
 import React from 'react';
-import { AlertCircle, Bookmark, ArrowRight } from 'lucide-react';
+import { User } from '@supabase/supabase-js';
+import { AlertCircle, Bookmark, ArrowRight, UserCheck, LogOut, LogIn } from 'lucide-react';
 
 export type AppStage = 'landing' | 'upload' | 'understand' | 'message' | 'finish';
 
@@ -11,6 +12,9 @@ interface HeaderProps {
   isSaved: boolean;
   savedReviewsCount: number;
   onOpenSavedReviews: () => void;
+  user?: User | null;
+  onOpenAuth?: () => void;
+  onSignOut?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -21,6 +25,9 @@ export const Header: React.FC<HeaderProps> = ({
   isSaved,
   savedReviewsCount,
   onOpenSavedReviews,
+  user,
+  onOpenAuth,
+  onSignOut,
 }) => {
   const steps: { stage: AppStage; num: number; label: string; shortLabel: string }[] = [
     { stage: 'upload', num: 1, label: '01 Upload', shortLabel: 'Upload' },
@@ -28,6 +35,43 @@ export const Header: React.FC<HeaderProps> = ({
     { stage: 'message', num: 3, label: '03 Message (Optional)', shortLabel: 'Message' },
     { stage: 'finish', num: 4, label: '04 Finish', shortLabel: 'Finish' },
   ];
+
+  const renderAuthPill = () => {
+    if (user) {
+      return (
+        <div className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-mono font-medium text-[#20221F] bg-[#FFFDF7] border border-[#D8D3C8] rounded-md">
+          <UserCheck className="h-3.5 w-3.5 text-[#285840]" />
+          <span className="max-w-[120px] truncate" title={user.email || 'Account'}>
+            {user.email?.split('@')[0] || 'Account'}
+          </span>
+          {onSignOut && (
+            <button
+              type="button"
+              onClick={onSignOut}
+              className="ml-1 p-0.5 text-[#777B73] hover:text-[#A12D2D] rounded transition-colors"
+              title="Sign out"
+              aria-label="Sign out"
+            >
+              <LogOut className="h-3 w-3" />
+            </button>
+          )}
+        </div>
+      );
+    }
+    if (onOpenAuth) {
+      return (
+        <button
+          type="button"
+          onClick={onOpenAuth}
+          className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-mono font-bold text-[#20221F] bg-[#FFFDF7] border border-[#D8D3C8] rounded-md hover:border-[#2546C4] hover:text-[#2546C4] transition-colors cursor-pointer"
+        >
+          <LogIn className="h-3 w-3 text-[#2546C4]" />
+          <span>Sign in</span>
+        </button>
+      );
+    }
+    return null;
+  };
 
   return (
     <header className="border-b border-[#D8D3C8] bg-[#F5F1E8] px-4 py-3 sm:px-6">
@@ -66,25 +110,30 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           </div>
 
-          {/* Mobile saved reviews trigger */}
-          {savedReviewsCount > 0 && (
-            <button
-              onClick={onOpenSavedReviews}
-              className="sm:hidden flex items-center gap-1.5 px-2.5 py-1 text-xs font-mono font-medium text-[#20221F] bg-[#FFFDF7] border border-[#D8D3C8] rounded-md hover:border-[#2546C4] transition-colors"
-            >
-              <Bookmark className="h-3 w-3 text-[#2546C4]" />
-              <span>Saved ({savedReviewsCount})</span>
-            </button>
-          )}
+          {/* Mobile triggers */}
+          <div className="sm:hidden flex items-center gap-2">
+            {renderAuthPill()}
+            {savedReviewsCount > 0 && (
+              <button
+                onClick={onOpenSavedReviews}
+                className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-mono font-medium text-[#20221F] bg-[#FFFDF7] border border-[#D8D3C8] rounded-md hover:border-[#2546C4] transition-colors"
+              >
+                <Bookmark className="h-3 w-3 text-[#2546C4]" />
+                <span>Saved ({savedReviewsCount})</span>
+              </button>
+            )}
+          </div>
         </div>
 
         {/* If on Landing Screen: show "NO ACCOUNT REQUIRED" pill and "Upload bill ->" (Image 7.jpeg) */}
         {currentStage === 'landing' ? (
           <div className="flex items-center gap-3 self-end sm:self-center">
-            <div className="inline-flex items-center gap-1.5 rounded-full border border-[#D8D3C8] bg-[#FFFDF7] px-3 py-1 font-mono text-[11px] text-[#555B55]">
-              <span className="h-1.5 w-1.5 rounded-full bg-[#285840]" />
-              <span className="font-semibold uppercase tracking-wider text-[#20221F]">NO ACCOUNT REQUIRED</span>
-            </div>
+            {!user && (
+              <div className="inline-flex items-center gap-1.5 rounded-full border border-[#D8D3C8] bg-[#FFFDF7] px-3 py-1 font-mono text-[11px] text-[#555B55]">
+                <span className="h-1.5 w-1.5 rounded-full bg-[#285840]" />
+                <span className="font-semibold uppercase tracking-wider text-[#20221F]">NO ACCOUNT REQUIRED</span>
+              </div>
+            )}
 
             <button
               type="button"
@@ -104,6 +153,8 @@ export const Header: React.FC<HeaderProps> = ({
                 <span>Saved ({savedReviewsCount})</span>
               </button>
             )}
+
+            <div className="hidden sm:block">{renderAuthPill()}</div>
           </div>
         ) : (
           /* Workflow Step Navigation (Image 1, 3, 5, 9) */
@@ -136,7 +187,7 @@ export const Header: React.FC<HeaderProps> = ({
               })}
             </nav>
 
-            {/* Right side status / saved reviews */}
+            {/* Right side status / saved reviews / auth */}
             <div className="hidden sm:flex items-center gap-3">
               {isReviewActive && !isSaved && (
                 <div className="flex items-center gap-1.5 rounded-md bg-[#FFF0D6] border border-[#F2D7A1] px-2.5 py-1 text-[11px] font-mono text-[#785015]">
@@ -154,6 +205,8 @@ export const Header: React.FC<HeaderProps> = ({
                   <span>Saved reviews ({savedReviewsCount})</span>
                 </button>
               )}
+
+              {renderAuthPill()}
             </div>
           </>
         )}
@@ -161,3 +214,4 @@ export const Header: React.FC<HeaderProps> = ({
     </header>
   );
 };
+

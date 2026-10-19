@@ -66,7 +66,7 @@ async function generateContentWithFallback(params: {
   timeoutPerModelMs?: number;
 }) {
   let lastError: any = null;
-  const timeoutMs = params.timeoutPerModelMs || 25000;
+  const timeoutMs = params.timeoutPerModelMs || 65000;
 
   for (const model of CANDIDATE_MODELS) {
     try {
@@ -95,7 +95,10 @@ async function generateContentWithFallback(params: {
         msg.includes('UNAVAILABLE') ||
         msg.includes('quota') ||
         msg.includes('RESOURCE_EXHAUSTED') ||
-        msg.includes('timed out');
+        msg.includes('timed out') ||
+        msg.includes('fetch failed') ||
+        msg.includes('ECONNRESET') ||
+        msg.includes('ETIMEDOUT');
 
       if (isRecoverable) {
         continue;
