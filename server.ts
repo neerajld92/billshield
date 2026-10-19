@@ -124,6 +124,101 @@ function toPaise(val: number | string | null | undefined): number | null {
 }
 
 // -------------------------------------------------------------
+// Groq (explanations + message drafting). Server-side only.
+// Gemini remains responsible for document extraction.
+// -------------------------------------------------------------
+const GROQ_MODEL = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
+const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
+
+/**
+ * Calls Groq chat completions. Throws on any failure (missing key, HTTP error,
+ * timeout, empty output) so callers can use their deterministic fallback.
+ * Never logs prompts or the API key.
+ */
+async function callGroq(opts: {
+  system: string;
+  user: string;
+  json?: boolean;
+  timeoutMs?: number;
+}): Promise<string> {
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) {
+    throw Object.assign(new Error('GROQ_API_KEY is not configured'), { status: 401 });
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 20000);
+  try {
+    const resp = await fetch(GROQ_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: GROQ_MODEL,
+        messages: [
+          { role: 'system', content: opts.system },
+          { role: 'user', content: opts.user },
+        ],
+        temperature: 0.2,
+        reasoning_effort: 'low',
+        max_completion_tokens: 1500,
+        ...(opts.json ? { response_format: { type: 'json_object' } } : {}),
+      }),
+      signal: controller.signal,
+    });
+
+    if (!resp.ok) {
+      // Do not include the response body verbatim; keep only a short, key-redacted snippet
+      const bodyText = (await resp.text().catch(() => '')).slice(0, 200);
+      throw Object.assign(new Error(`Groq HTTP ${resp.status}: ${bodyText}`), { status: resp.status });
+    }
+
+    const data: any = await resp.json();
+    const text: string = data?.choices?.[0]?.message?.content?.trim() || '';
+    if (!text) throw new Error('Groq returned empty output');
+    return text;
+  } catch (err: any) {
+    if (err?.name === 'AbortError') {
+      throw Object.assign(new Error('Groq request timed out'), { status: 504 });
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Redacts anything shaped like an API key before logging. */
+function redactForLog(msg: string): string {
+  return (msg || '')
+    .replace(/gsk_[0-9A-Za-z]{10,}/g, '[redacted]')
+    .replace(/AIza[0-9A-Za-z_-]{20,}/g, '[redacted]')
+    .replace(/Bearer\s+\S+/g, 'Bearer [redacted]')
+    .slice(0, 250);
+}
+
+/**
+ * Deterministic guard: LLM prose must never introduce or change bill amounts.
+ * Every currency amount (₹ / Rs / INR prefixed) found in the text must equal
+ * one of the allowed real amounts (in paise). UUIDs are always rejected.
+ */
+function llmTextIsSafe(text: string, allowedPaise: Array<number | null | undefined>): boolean {
+  if (/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(text)) return false;
+  const allowed = new Set(
+    allowedPaise.filter((v): v is number => typeof v === 'number').map((v) => Math.abs(v))
+  );
+  const re = /(?:₹|Rs\.?|INR)\s*([\d,]+(?:\.\d+)?)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const paise = toPaise(m[1]);
+    if (paise === null || !allowed.has(Math.abs(paise))) return false;
+  }
+  return true;
+}
+
+
+// -------------------------------------------------------------
 // POST /api/extract-bill
 // -------------------------------------------------------------
 app.post('/api/extract-bill', async (req, res) => {
@@ -444,35 +539,31 @@ Requirements:
 Never accuse fraud or guarantee refunds. Keep answers brief and neutral.`;
 
   try {
-    const response = await withTimeout(
-      ai.models.generateContent({
-        model: 'gemini-3.8-flash',
-        contents: promptText,
-        config: {
-          systemInstruction:
-            'You explain bill line items neutrally and briefly in plain consumer terms. Follow the three output fields exactly.',
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              whatBillShows: { type: Type.STRING },
-              whatThisUsuallyMeans: { type: Type.STRING },
-              whatRemainsUnclear: { type: Type.STRING },
-            },
-            required: ['whatBillShows', 'whatThisUsuallyMeans', 'whatRemainsUnclear'],
-          },
-        },
-      }),
-      30000
-    );
+    const text = await callGroq({
+      system:
+        'You explain bill line items neutrally and briefly in plain consumer terms. Respond with a single JSON object with exactly three string keys: whatBillShows, whatThisUsuallyMeans, whatRemainsUnclear. Use only the amount given, exactly as written; never calculate, change or add amounts. Never accuse fraud or guarantee refunds.',
+      user: promptText,
+      json: true,
+      timeoutMs: 20000,
+    });
 
-    const text = response.text;
-    if (text) {
-      const explanation = JSON.parse(text);
+    const parsed = JSON.parse(text);
+    const keys = ['whatBillShows', 'whatThisUsuallyMeans', 'whatRemainsUnclear'] as const;
+    const valid = keys.every((k) => typeof parsed?.[k] === 'string' && parsed[k].trim().length > 0);
+    const explanation = valid
+      ? {
+          whatBillShows: parsed.whatBillShows.trim(),
+          whatThisUsuallyMeans: parsed.whatThisUsuallyMeans.trim(),
+          whatRemainsUnclear: parsed.whatRemainsUnclear.trim(),
+        }
+      : null;
+
+    if (explanation && llmTextIsSafe(Object.values(explanation).join(' '), [charge.amount])) {
       return res.json(explanation);
     }
+    console.warn('Groq explain-charge output failed validation, using factual fallback.');
   } catch (error: any) {
-    console.warn('Gemini explain-charge latency/error, using factual fallback:', error?.message);
+    console.warn('Groq explain-charge error, using factual fallback:', error?.status, redactForLog(error?.message));
   }
 
   // Graceful fallback to verified bill facts
@@ -514,24 +605,21 @@ ${cleanRef ? `- Include the Customer Reference (${cleanRef}) naturally in the me
 - Do NOT invent fake customer numbers, email addresses, or threats.`;
 
   try {
-    const response = await withTimeout(
-      ai.models.generateContent({
-        model: 'gemini-3.8-flash',
-        contents: promptText,
-        config: {
-          systemInstruction:
-            'Draft concise, polite clarification messages for consumers to send to providers. Do not invent details or references.',
-        },
-      }),
-      30000
-    );
+    const text = await callGroq({
+      system:
+        'Draft concise, polite clarification messages for consumers to send to providers. Do not invent details or references. Use only the amounts given, exactly as written; never calculate, change or add amounts. Output only the message text.',
+      user: promptText,
+      timeoutMs: 20000,
+    });
 
-    const text = response.text ? response.text.trim() : '';
-    if (text) {
+    const amountsOk = llmTextIsSafe(text, selectedCharges.map((c: any) => c?.amount));
+    const refOk = !cleanRef || text.includes(cleanRef);
+    if (amountsOk && refOk) {
       return res.json({ draft: text });
     }
+    console.warn('Groq draft-message output failed safety validation, using factual template.');
   } catch (error: any) {
-    console.warn('Gemini draft-message latency/error, using factual template:', error?.message);
+    console.warn('Groq draft-message error, using factual template:', error?.status, redactForLog(error?.message));
   }
 
   // Graceful fallback to verified bill facts template (respect cleanRef)
