@@ -498,13 +498,50 @@ function getFallbackExplanation(charge: any, billContext: any) {
 }
 
 // Helper: Deterministic fallback message draft
-function getFallbackDraftMessage(selectedCharges: any[], billContext: any, additionalReference?: string | null) {
+function getFallbackDraftMessage(
+  selectedCharges: any[],
+  billContext: any,
+  additionalReference?: string | null,
+  discrepancy?: any
+) {
   const provider = billContext?.provider || 'Service Provider';
   // If additionalReference is provided (including empty string or null), respect user's explicit choice
   const rawRef = additionalReference !== undefined ? additionalReference : billContext?.account_reference;
   const ref = sanitizeCustomerReference(rawRef);
   const refStr = ref ? ` (Ref: ${ref})` : '';
 
+  const hasCharges = Array.isArray(selectedCharges) && selectedCharges.length > 0;
+  const hasDiscrepancy =
+    !!discrepancy &&
+    typeof discrepancy.arithmetic_difference === 'number' &&
+    typeof discrepancy.printed_total === 'number' &&
+    typeof discrepancy.calculated_total === 'number';
+
+  const printedAmt = hasDiscrepancy ? `₹${(Math.abs(discrepancy.printed_total) / 100).toFixed(2)}` : '';
+  const calcAmt = hasDiscrepancy ? `₹${(Math.abs(discrepancy.calculated_total) / 100).toFixed(2)}` : '';
+  const diffPaise = discrepancy?.arithmetic_difference || 0;
+  const diffAmt = `₹${(Math.abs(diffPaise) / 100).toFixed(2)}`;
+  const diffDir = diffPaise > 0 ? 'more' : 'less';
+
+  // Case 1: Only discrepancy selected
+  if (!hasCharges && hasDiscrepancy) {
+    return `Hello, my ${provider} bill${refStr} shows a printed total of ${printedAmt}, but the line items add up to ${calcAmt} (${diffAmt} ${diffDir} than the printed total). Could you please clarify why the line items do not match the printed total? Thank you.`;
+  }
+
+  // Case 2: Charge(s) + discrepancy selected
+  if (hasCharges && hasDiscrepancy) {
+    if (selectedCharges.length === 1) {
+      const item = selectedCharges[0];
+      const amt = item.amount !== null ? `₹${(Math.abs(item.amount) / 100).toFixed(2)}` : '';
+      return `Hello, my ${provider} bill${refStr} includes a charge of ${amt} for "${item.description}". In addition, the line items add up to ${calcAmt}, which is ${diffAmt} ${diffDir} than the printed total of ${printedAmt}. Could you please explain what this charge covers and clarify why the totals do not match? Thank you.`;
+    }
+    const items = selectedCharges
+      .map((c) => `"${c.description}" (${c.amount !== null ? `₹${(Math.abs(c.amount) / 100).toFixed(2)}` : ''})`)
+      .join(', ');
+    return `Hello, my ${provider} bill${refStr} includes the following charges: ${items}. In addition, the line items add up to ${calcAmt}, which is ${diffAmt} ${diffDir} than the printed total of ${printedAmt}. Could you please explain what these charges cover and clarify why the line items do not match the printed total? Thank you.`;
+  }
+
+  // Case 3: Only charges selected
   if (selectedCharges.length === 1) {
     const item = selectedCharges[0];
     const amt = item.amount !== null ? `₹${(Math.abs(item.amount) / 100).toFixed(2)}` : '';
@@ -577,24 +614,45 @@ Never accuse fraud or guarantee refunds. Keep answers brief and neutral.`;
 // POST /api/draft-message
 // -------------------------------------------------------------
 app.post('/api/draft-message', async (req, res) => {
-  const { selectedCharges, billContext, additionalReference } = req.body;
-  if (!selectedCharges || selectedCharges.length === 0) {
-    return res.status(400).json({ error: 'No charges selected for clarification' });
+  const { selectedCharges, billContext, additionalReference, discrepancy } = req.body;
+  const hasCharges = Array.isArray(selectedCharges) && selectedCharges.length > 0;
+  const hasDiscrepancy =
+    !!discrepancy &&
+    typeof discrepancy.arithmetic_difference === 'number' &&
+    typeof discrepancy.printed_total === 'number' &&
+    typeof discrepancy.calculated_total === 'number';
+
+  if (!hasCharges && !hasDiscrepancy) {
+    return res.status(400).json({ error: 'No items selected for clarification' });
   }
 
-  const itemsSummary = selectedCharges
-    .map((c: any) => {
-      const amt = c.amount !== null ? `₹${(c.amount / 100).toFixed(2)}` : 'unspecified amount';
-      return `"${c.description}" (${amt})`;
-    })
-    .join(', ');
+  let itemsSummary = '';
+  if (hasCharges) {
+    itemsSummary = selectedCharges
+      .map((c: any) => {
+        const amt = c.amount !== null ? `₹${(c.amount / 100).toFixed(2)}` : 'unspecified amount';
+        return `"${c.description}" (${amt})`;
+      })
+      .join(', ');
+  }
+
+  let discrepancySummary = '';
+  if (hasDiscrepancy) {
+    const printedStr = `₹${(Math.abs(discrepancy.printed_total) / 100).toFixed(2)}`;
+    const calcStr = `₹${(Math.abs(discrepancy.calculated_total) / 100).toFixed(2)}`;
+    const diffPaise = discrepancy.arithmetic_difference;
+    const diffStr = `₹${(Math.abs(diffPaise) / 100).toFixed(2)}`;
+    const direction = diffPaise > 0 ? 'more' : 'less';
+    discrepancySummary = `Arithmetic mismatch: The printed bill total is ${printedStr}, but the line items calculate to ${calcStr} (${diffStr} ${direction} than the printed total).`;
+  }
 
   // If additionalReference was provided (including empty string or null), use it directly
   const rawRef = additionalReference !== undefined ? additionalReference : billContext?.account_reference;
   const cleanRef = sanitizeCustomerReference(rawRef);
 
   const promptText = `Draft a polite, concise clarification message for a customer to send to their provider (${billContext?.provider || 'their service provider'}).
-Charge(s) to clarify: ${itemsSummary}
+${hasCharges ? `Charge(s) to clarify: ${itemsSummary}` : ''}
+${hasDiscrepancy ? discrepancySummary : ''}
 Provider: ${billContext?.provider || 'Service Provider'}
 Service: ${billContext?.service || 'Service'}
 Bill Date: ${billContext?.date || 'Recent'}
@@ -603,7 +661,8 @@ ${cleanRef ? `Customer Reference: ${cleanRef}` : 'Customer Reference: None provi
 Rules:
 - 2 short sentences.
 - Polite, clear, ready to copy and send.
-- Ask what the charge relates to and request the usage breakdown.
+${hasCharges ? '- Ask what the charge relates to and request the usage breakdown.' : ''}
+${hasDiscrepancy ? '- Ask why the line items do not match the printed total, stating the printed total and calculated total exactly as given.' : ''}
 ${cleanRef ? `- Include the Customer Reference (${cleanRef}) naturally in the message so the provider can identify the booking or account.` : `- Do NOT include, mention, or invent any reference number, booking ID, account number, or internal ID.`}
 - Do NOT invent fake customer numbers, email addresses, or threats.`;
 
@@ -615,7 +674,14 @@ ${cleanRef ? `- Include the Customer Reference (${cleanRef}) naturally in the me
       timeoutMs: 20000,
     });
 
-    const amountsOk = llmTextIsSafe(text, selectedCharges.map((c: any) => c?.amount));
+    const allowedAmounts: Array<number | null | undefined> = (selectedCharges || []).map((c: any) => c?.amount);
+    if (hasDiscrepancy) {
+      allowedAmounts.push(discrepancy.printed_total);
+      allowedAmounts.push(discrepancy.calculated_total);
+      allowedAmounts.push(Math.abs(discrepancy.arithmetic_difference));
+    }
+
+    const amountsOk = llmTextIsSafe(text, allowedAmounts);
     const refOk = !cleanRef || text.includes(cleanRef);
     if (amountsOk && refOk) {
       return res.json({ draft: text });
@@ -626,7 +692,7 @@ ${cleanRef ? `- Include the Customer Reference (${cleanRef}) naturally in the me
   }
 
   // Graceful fallback to verified bill facts template (respect cleanRef)
-  return res.json({ draft: getFallbackDraftMessage(selectedCharges, billContext, cleanRef || '') });
+  return res.json({ draft: getFallbackDraftMessage(selectedCharges || [], billContext, cleanRef || '', discrepancy) });
 });
 
 // -------------------------------------------------------------

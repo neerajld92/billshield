@@ -15,13 +15,14 @@ import {
   X,
   Edit2,
 } from 'lucide-react';
-import { Bill, Charge, Message } from '../types';
+import { Bill, Charge, Message, Analysis, ARITHMETIC_DISCREPANCY_ID } from '../types';
 import { formatMinorUnits } from '../utils/money';
 import { sanitizeCustomerReference } from '../utils/reference';
 
 interface MessageScreenProps {
   bill: Bill;
   charges: Charge[];
+  analysis: Analysis;
   selectedChargeIds: string[];
   message: Message;
   onUpdateMessage: (updatedMessage: Message) => void;
@@ -32,13 +33,20 @@ interface MessageScreenProps {
 export const MessageScreen: React.FC<MessageScreenProps> = ({
   bill,
   charges,
+  analysis,
   selectedChargeIds,
   message,
   onUpdateMessage,
   onBackToBill,
   onContinueToFinish,
 }) => {
+  const isDiscrepancySelected =
+    selectedChargeIds.includes(ARITHMETIC_DISCREPANCY_ID) &&
+    analysis?.status === 'mismatch' &&
+    analysis?.calculated_total !== null &&
+    analysis?.arithmetic_difference !== null;
   const selectedCharges = charges.filter((c) => selectedChargeIds.includes(c.id));
+  const totalSelectedCount = selectedCharges.length + (isDiscrepancySelected ? 1 : 0);
   const [copied, setCopied] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationError, setGenerationError] = useState<string | null>(null);
@@ -85,10 +93,39 @@ export const MessageScreen: React.FC<MessageScreenProps> = ({
     const cleanRef = sanitizeCustomerReference(effectiveRaw);
     const refText = cleanRef ? ` (Ref: ${cleanRef})` : '';
 
-    if (!selectedCharges || selectedCharges.length === 0) {
+    const hasCharges = selectedCharges && selectedCharges.length > 0;
+    const hasDiscrepancy = isDiscrepancySelected;
+
+    const printedAmt = formatMinorUnits(bill?.billed_amount, currency);
+    const calcAmt = formatMinorUnits(analysis?.calculated_total, currency);
+    const diffPaise = analysis?.arithmetic_difference || 0;
+    const diffAmt = formatMinorUnits(Math.abs(diffPaise), currency);
+    const diffDir = diffPaise > 0 ? 'more' : 'less';
+
+    // Case 1: Nothing selected
+    if (!hasCharges && !hasDiscrepancy) {
       return `Hello, could you please clarify the recent charges on my ${providerName} bill${refText}? Thank you.`;
     }
 
+    // Case 2: Only discrepancy selected
+    if (!hasCharges && hasDiscrepancy) {
+      return `Hello, my ${providerName} bill${refText} shows a printed total of ${printedAmt}, but the line items add up to ${calcAmt} (${diffAmt} ${diffDir} than the printed total). Could you please clarify why the line items do not match the printed total? Thank you.`;
+    }
+
+    // Case 3: Both charges and discrepancy selected
+    if (hasCharges && hasDiscrepancy) {
+      if (selectedCharges.length === 1) {
+        const item = selectedCharges[0];
+        const amt = item.amount !== null ? formatMinorUnits(item.amount, currency) : '';
+        return `Hello, my ${providerName} bill${refText} includes a charge of ${amt} for "${item.description || 'an item'}". In addition, the line items add up to ${calcAmt}, which is ${diffAmt} ${diffDir} than the printed total of ${printedAmt}. Could you please explain what this charge covers and clarify why the totals do not match? Thank you.`;
+      }
+      const itemsList = selectedCharges
+        .map((c) => `"${c.description || 'Item'}" (${c.amount !== null ? formatMinorUnits(c.amount, currency) : 'unspecified'})`)
+        .join(', ');
+      return `Hello, my ${providerName} bill${refText} includes the following charges: ${itemsList}. In addition, the line items add up to ${calcAmt}, which is ${diffAmt} ${diffDir} than the printed total of ${printedAmt}. Could you please explain what these charges cover and clarify why the line items do not match the printed total? Thank you.`;
+    }
+
+    // Case 4: Only charges selected
     if (selectedCharges.length === 1) {
       const item = selectedCharges[0];
       const amt = item.amount !== null ? formatMinorUnits(item.amount, currency) : '';
@@ -125,6 +162,11 @@ export const MessageScreen: React.FC<MessageScreenProps> = ({
             currency: bill?.currency || 'INR',
           },
           additionalReference: cleanTargetRef || undefined,
+          discrepancy: isDiscrepancySelected ? {
+            printed_total: bill?.billed_amount,
+            calculated_total: analysis?.calculated_total,
+            arithmetic_difference: analysis?.arithmetic_difference,
+          } : null,
         }),
       });
 
@@ -169,7 +211,7 @@ export const MessageScreen: React.FC<MessageScreenProps> = ({
 
   // Initial draft on screen open if not drafted yet
   useEffect(() => {
-    if (!message.is_drafted && !message.final_text && selectedCharges.length > 0) {
+    if (!message.is_drafted && !message.final_text && totalSelectedCount > 0) {
       handleGenerateDraft(referenceInput);
     }
   }, []);
@@ -263,14 +305,19 @@ export const MessageScreen: React.FC<MessageScreenProps> = ({
       <div className="mb-6 inline-flex flex-wrap items-center gap-2 rounded-full border border-[#D8D3C8] bg-[#FFFDF7] px-3.5 py-1.5 text-xs">
         <span className="h-2 w-2 rounded-full bg-[#2546C4]" />
         <span className="font-mono text-[11px] font-bold text-[#555B55]">
-          Selected charge{selectedCharges.length !== 1 ? 's' : ''}:
+          Selected item{totalSelectedCount !== 1 ? 's' : ''}:
         </span>
         {selectedCharges.map((c, i) => (
           <span key={c.id} className="font-mono font-bold text-[#20221F]">
             {c.description} ({formatMinorUnits(c.amount, bill.currency)})
-            {i < selectedCharges.length - 1 ? ',' : ''}
+            {i < selectedCharges.length - 1 || isDiscrepancySelected ? ',' : ''}
           </span>
         ))}
+        {isDiscrepancySelected && (
+          <span className="font-mono font-bold text-[#785015]">
+            Arithmetic discrepancy ({analysis.arithmetic_difference !== null && analysis.arithmetic_difference > 0 ? '+' : ''}{formatMinorUnits(analysis.arithmetic_difference, bill.currency)})
+          </span>
+        )}
       </div>
 
       {/* Generation Error Banner with Retry */}

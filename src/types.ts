@@ -47,6 +47,8 @@ export interface Charge {
   type: ChargeType;
 }
 
+export const ARITHMETIC_DISCREPANCY_ID = 'arithmetic-discrepancy';
+
 export interface Analysis {
   id: string;
   bill_id: string;

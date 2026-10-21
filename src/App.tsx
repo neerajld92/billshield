@@ -16,7 +16,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { User } from '@supabase/supabase-js';
-import { Bill, Charge, Analysis, Message, SavedReview, ChargeExplanation } from './types';
+import { Bill, Charge, Analysis, Message, SavedReview, ChargeExplanation, ARITHMETIC_DISCREPANCY_ID } from './types';
 import { calculateAnalysis } from './utils/money';
 import { getSavedReviews, saveReview, deleteSavedReview } from './utils/storage';
 import {
@@ -240,7 +240,17 @@ export default function App() {
   };
 
   const handleSelectAllCharges = (select: boolean) => {
-    const next = select ? charges.map((c) => c.id) : [];
+    let next: string[] = [];
+    if (select) {
+      next = charges.map((c) => c.id);
+      if (
+        currentAnalysis?.status === 'mismatch' &&
+        currentAnalysis.calculated_total !== null &&
+        currentAnalysis.arithmetic_difference !== null
+      ) {
+        next.push(ARITHMETIC_DISCREPANCY_ID);
+      }
+    }
     setSelectedChargeIds(next);
     setMessage((msg) => ({
       ...msg,
@@ -514,6 +524,7 @@ export default function App() {
           <MessageScreen
             bill={bill}
             charges={charges}
+            analysis={currentAnalysis}
             selectedChargeIds={selectedChargeIds}
             message={message}
             onUpdateMessage={setMessage}

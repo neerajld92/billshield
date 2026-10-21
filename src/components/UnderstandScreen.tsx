@@ -17,7 +17,7 @@ import {
   Undo2,
   Check,
 } from 'lucide-react';
-import { Bill, Charge, Analysis, ChargeExplanation, ChargeType } from '../types';
+import { Bill, Charge, Analysis, ChargeExplanation, ChargeType, ARITHMETIC_DISCREPANCY_ID } from '../types';
 import { formatMinorUnits, parseToMinorUnits, NON_CONTRIBUTING_TYPES } from '../utils/money';
 import { sanitizeCustomerReference } from '../utils/reference';
 
@@ -77,6 +77,13 @@ export const UnderstandScreen: React.FC<UnderstandScreenProps> = ({
   const [isAddChargeModalOpen, setIsAddChargeModalOpen] = useState(false);
   const [recentlyDeletedCharge, setRecentlyDeletedCharge] = useState<{ charge: Charge; index: number } | null>(null);
   const [isContextModalOpen, setIsContextModalOpen] = useState(false);
+  const chargesSectionRef = React.useRef<HTMLDivElement>(null);
+
+  const handleScrollToCharges = () => {
+    if (analysis.status === 'mismatch' && chargesSectionRef.current) {
+      chargesSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
 
   // Inspected charge object
   const inspectedCharge = charges.find((c) => c.id === inspectedChargeId) || null;
@@ -385,11 +392,24 @@ export const UnderstandScreen: React.FC<UnderstandScreenProps> = ({
 
         {/* Item total arithmetic statement */}
         <div
-          className={`rounded-lg p-3.5 text-xs flex items-start gap-2.5 ${
+          onClick={analysis.status === 'mismatch' ? handleScrollToCharges : undefined}
+          role={analysis.status === 'mismatch' ? 'button' : undefined}
+          tabIndex={analysis.status === 'mismatch' ? 0 : undefined}
+          onKeyDown={
+            analysis.status === 'mismatch'
+              ? (e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    handleScrollToCharges();
+                  }
+                }
+              : undefined
+          }
+          className={`rounded-lg p-3.5 text-xs flex items-start gap-2.5 transition-all ${
             analysis.status === 'match'
               ? 'bg-[#EAF1E8] border border-[#C5DDC0] text-[#285840]'
               : analysis.status === 'mismatch'
-              ? 'bg-[#FFF0D6] border border-[#F2D7A1] text-[#785015]'
+              ? 'bg-[#FFF0D6] border border-[#F2D7A1] text-[#785015] cursor-pointer hover:border-[#E58300] hover:shadow-xs focus:outline-hidden focus:ring-2 focus:ring-[#E58300]/50'
               : 'bg-[#F4F4EF] border border-[#D8D3C8] text-[#555B55]'
           }`}
         >
@@ -398,7 +418,7 @@ export const UnderstandScreen: React.FC<UnderstandScreenProps> = ({
           ) : (
             <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-[#785015]" />
           )}
-          <div>
+          <div className="flex-1 min-w-0">
             <div className="font-bold text-sm">
               {analysis.status === 'match'
                 ? `The bill items match the printed total (₹0.00 difference)`
@@ -411,10 +431,18 @@ export const UnderstandScreen: React.FC<UnderstandScreenProps> = ({
                   } than the printed total`
                 : 'Item breakdown is needed before we can check the total.'}
             </div>
-            <div className="mt-0.5 text-[11px] opacity-90">
-              {analysis.status === 'match'
-                ? 'Matching totals don’t tell us why a charge was added. You can ask about any item.'
-                : 'You can correct item amounts or clarify items that might already be included.'}
+            <div className="mt-0.5 text-[11px] opacity-90 flex items-center justify-between flex-wrap gap-1">
+              <span>
+                {analysis.status === 'match'
+                  ? 'Matching totals don’t tell us why a charge was added. You can ask about any item.'
+                  : 'You can correct item amounts or clarify items that might already be included.'}
+              </span>
+              {analysis.status === 'mismatch' && (
+                <span className="font-mono text-[10px] font-bold underline underline-offset-2 flex items-center gap-0.5 text-[#785015] shrink-0">
+                  <span>Review charges</span>
+                  <ArrowRight className="h-3 w-3 inline rotate-90" />
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -423,7 +451,11 @@ export const UnderstandScreen: React.FC<UnderstandScreenProps> = ({
       {/* Main 2-Column Area: Left Charges List, Right Inspection Panel */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-8">
         {/* Left Column: Charge List (lg:col-span-7) */}
-        <div className="lg:col-span-7 rounded-lg border border-[#D8D3C8] bg-[#FFFDF7] p-5 flex flex-col justify-between">
+        <div
+          ref={chargesSectionRef}
+          id="charges-section"
+          className="lg:col-span-7 rounded-lg border border-[#D8D3C8] bg-[#FFFDF7] p-5 flex flex-col justify-between"
+        >
           <div>
             <div className="flex items-center justify-between pb-3 border-b border-[#D8D3C8]">
               <div>
@@ -431,12 +463,73 @@ export const UnderstandScreen: React.FC<UnderstandScreenProps> = ({
                 <p className="text-xs text-[#555B55]">Select anything you'd like explained.</p>
               </div>
               <span className="font-mono text-xs font-bold text-[#777B73]">
-                {charges.length} Items Listed
+                {charges.length +
+                  (analysis.status === 'mismatch' &&
+                  analysis.calculated_total !== null &&
+                  analysis.arithmetic_difference !== null
+                    ? 1
+                    : 0)}{' '}
+                Items Listed
               </span>
             </div>
 
             {/* List of charges */}
             <div className="divide-y divide-[#D8D3C8]/50 mt-2">
+              {/* Virtual Review Item: Arithmetic Discrepancy (only shown when mismatch exists) */}
+              {analysis.status === 'mismatch' &&
+                analysis.calculated_total !== null &&
+                analysis.arithmetic_difference !== null && (
+                  <div
+                    onClick={() => onToggleChargeSelect(ARITHMETIC_DISCREPANCY_ID)}
+                    className={`p-3 rounded-md transition-colors flex items-center justify-between gap-3 cursor-pointer ${
+                      selectedChargeIds.includes(ARITHMETIC_DISCREPANCY_ID)
+                        ? 'bg-[#FFF8ED] border border-[#F2D7A1]'
+                        : 'bg-[#FFFDF7] hover:bg-[#F4F4EF]'
+                    }`}
+                  >
+                    <div className="flex items-start gap-3 min-w-0">
+                      <input
+                        type="checkbox"
+                        checked={selectedChargeIds.includes(ARITHMETIC_DISCREPANCY_ID)}
+                        onChange={() => onToggleChargeSelect(ARITHMETIC_DISCREPANCY_ID)}
+                        onClick={(e) => e.stopPropagation()}
+                        className="mt-1 h-4 w-4 rounded border-[#777B73] text-[#2546C4] focus:ring-[#2546C4] cursor-pointer"
+                        aria-label="Select Arithmetic discrepancy"
+                      />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-semibold text-sm text-[#20221F]">
+                            Arithmetic discrepancy
+                          </span>
+                          <span className="font-mono text-[9px] font-bold text-[#785015] bg-[#FFF0D6] border border-[#F2D7A1] px-1 py-0.2 rounded">
+                            CALCULATION MISMATCH
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-[#555B55] mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono">
+                          <span>
+                            Printed: <strong className="text-[#20221F]">{formatMinorUnits(bill.billed_amount, bill.currency)}</strong>
+                          </span>
+                          <span className="text-[#D8D3C8]">·</span>
+                          <span>
+                            Calculated: <strong className="text-[#20221F]">{formatMinorUnits(analysis.calculated_total, bill.currency)}</strong>
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3 shrink-0">
+                      <div className="text-right">
+                        <div className="font-mono text-sm font-bold tabular-nums text-[#785015]">
+                          {(analysis.arithmetic_difference || 0) > 0 ? '+' : ''}
+                          {formatMinorUnits(analysis.arithmetic_difference, bill.currency)}
+                        </div>
+                        <div className="text-[10px] font-mono text-[#777B73]">
+                          {(analysis.arithmetic_difference || 0) > 0 ? 'more than bill' : 'less than bill'}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
               {charges.map((charge) => {
                 const isSelected = selectedChargeIds.includes(charge.id);
                 const isInspected = inspectedChargeId === charge.id;
@@ -572,7 +665,7 @@ export const UnderstandScreen: React.FC<UnderstandScreenProps> = ({
             </div>
           </div>
 
-          {/* Bottom selection bar (Cleaned up: No duplicate Draft a message button!) */}
+          {/* Bottom selection bar */}
           <div className="mt-6 pt-4 border-t border-[#D8D3C8] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-[#F4F4EF] p-3 rounded-md">
             <div className="flex items-center gap-2">
               <span className="h-2 w-2 rounded-full bg-[#2546C4]" />
@@ -583,20 +676,51 @@ export const UnderstandScreen: React.FC<UnderstandScreenProps> = ({
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => onSelectAllCharges(selectedChargeIds.length !== charges.length)}
-                className="px-2.5 py-1 text-xs font-mono text-[#555B55] hover:text-[#20221F] underline"
+                onClick={() => onSelectAllCharges(selectedChargeIds.length === 0)}
+                className="px-2.5 py-1 text-xs font-mono text-[#555B55] hover:text-[#20221F] underline cursor-pointer"
               >
-                {selectedChargeIds.length === charges.length ? 'Clear selection' : 'Select all'}
+                {selectedChargeIds.length > 0 ? 'Clear selection' : 'Select all'}
               </button>
               <button
                 type="button"
                 onClick={() => setIsAddChargeModalOpen(true)}
-                className="flex items-center gap-1 px-2.5 py-1 text-xs font-mono font-medium rounded border border-[#D8D3C8] bg-white hover:bg-[#F5F1E8] text-[#20221F]"
+                className="flex items-center gap-1 px-2.5 py-1 text-xs font-mono font-medium rounded border border-[#D8D3C8] bg-white hover:bg-[#F5F1E8] text-[#20221F] cursor-pointer"
               >
                 <Plus className="h-3.5 w-3.5" />
                 <span>Add missing item</span>
               </button>
             </div>
+          </div>
+
+          {/* Prominent Draft Clarification Action immediately following charge selection */}
+          <div className="mt-4 pt-4 border-t border-[#D8D3C8] flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div className="text-xs text-[#555B55] text-center sm:text-left">
+              {selectedChargeIds.length > 0 ? (
+                <span>
+                  Ready to draft a ready-to-send question for your provider.
+                </span>
+              ) : (
+                <span>
+                  Select any charges or calculation issues to ask about.
+                </span>
+              )}
+            </div>
+
+            <button
+              type="button"
+              disabled={selectedChargeIds.length === 0}
+              onClick={handleStartDrafting}
+              className={`w-full sm:w-auto inline-flex items-center justify-center gap-2.5 rounded-lg px-6 py-3 font-mono text-sm font-bold transition-all shadow-sm cursor-pointer ${
+                selectedChargeIds.length > 0
+                  ? 'bg-[#2546C4] text-white hover:bg-[#1C369B] active:translate-y-0.5'
+                  : 'bg-[#D8D3C8] text-[#777B73] cursor-not-allowed shadow-none'
+              }`}
+            >
+              <span>
+                Draft clarification{selectedChargeIds.length > 0 ? ` (${selectedChargeIds.length})` : ''}
+              </span>
+              <ArrowRight className="h-4 w-4" />
+            </button>
           </div>
         </div>
 
@@ -713,12 +837,12 @@ export const UnderstandScreen: React.FC<UnderstandScreenProps> = ({
         </div>
       </div>
 
-      {/* Single Bottom Primary Navigation Strip (Clear, non-duplicated) */}
+      {/* Single Bottom Navigation Strip */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-6 border-t border-[#D8D3C8]">
         <button
           type="button"
           onClick={onGoToFinishWithoutDrafting}
-          className="text-xs font-mono font-medium text-[#555B55] hover:text-[#20221F] underline underline-offset-4"
+          className="text-xs font-mono font-medium text-[#555B55] hover:text-[#20221F] underline underline-offset-4 cursor-pointer"
         >
           ✓ Finish without drafting
         </button>
@@ -727,22 +851,9 @@ export const UnderstandScreen: React.FC<UnderstandScreenProps> = ({
           <button
             type="button"
             onClick={onReupload}
-            className="px-4 py-2.5 font-mono text-xs font-medium text-[#20221F] bg-[#FFFDF7] border border-[#D8D3C8] rounded-md hover:bg-[#F4F4EF] transition-colors"
+            className="px-4 py-2.5 font-mono text-xs font-medium text-[#20221F] bg-[#FFFDF7] border border-[#D8D3C8] rounded-md hover:bg-[#F4F4EF] transition-colors cursor-pointer"
           >
             ← Re-upload
-          </button>
-          <button
-            type="button"
-            disabled={selectedChargeIds.length === 0}
-            onClick={handleStartDrafting}
-            className={`px-5 py-2.5 font-mono text-xs font-bold rounded-md transition-colors flex items-center gap-2 ${
-              selectedChargeIds.length > 0
-                ? 'bg-[#2546C4] text-white hover:bg-[#1C369B]'
-                : 'bg-[#D8D3C8] text-[#777B73] cursor-not-allowed'
-            }`}
-          >
-            <span>Draft a message ({selectedChargeIds.length} selected)</span>
-            <ArrowRight className="h-4 w-4" />
           </button>
         </div>
       </div>

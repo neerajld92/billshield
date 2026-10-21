@@ -72,9 +72,24 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess
       setIsSent(true);
     } catch (err: any) {
       console.error('[Auth] Error sending magic link:', err);
+      const rawMessage = err?.message || '';
+      const isConnectionBlocked =
+        rawMessage.includes('Failed to fetch') ||
+        rawMessage.includes('Load failed') ||
+        rawMessage.includes('NetworkError') ||
+        err?.name === 'AuthRetryableFetchError';
+
+      let userFriendlyText = rawMessage || 'Failed to send sign-in link. Please check your email and try again.';
+      if (isConnectionBlocked) {
+        userFriendlyText =
+          'Unable to connect to the authentication service. If you are using an ad-blocker (such as Brave Shields or uBlock), corporate VPN, or strict firewall, please disable it for this site and try again.';
+      } else if (rawMessage.toLowerCase().includes('rate limit')) {
+        userFriendlyText = 'Too many requests. Please wait a few minutes before requesting another sign-in link.';
+      }
+
       setStatusMessage({
         type: 'error',
-        text: err?.message || 'Failed to send sign-in link. Please check your email and try again.',
+        text: userFriendlyText,
       });
     } finally {
       setIsLoading(false);
